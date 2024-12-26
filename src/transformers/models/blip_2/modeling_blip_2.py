@@ -25,6 +25,7 @@ from torch.nn import CrossEntropyLoss
 
 from ...activations import ACT2FN
 from ...generation import GenerationMixin
+from ...loss.positive_negative_loss import PositiveNegativeLoss
 from ...modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -69,6 +70,8 @@ class Blip2ForConditionalGenerationModelOutput(ModelOutput):
     """
 
     loss: Optional[Tuple[torch.FloatTensor]] = None
+    loss_cap: Optional[Tuple[torch.FloatTensor]] = None
+    loss_neg: Optional[Tuple[torch.FloatTensor]] = None
     logits: Optional[Tuple[torch.FloatTensor]] = None
     vision_outputs: Optional[torch.FloatTensor] = None
     qformer_outputs: Optional[Tuple[torch.FloatTensor]] = None
@@ -2229,9 +2232,13 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
                 shift_labels = labels[..., 1:].contiguous().to(logits.device)
 
                 # Flatten the tokens
-                loss_fct = CrossEntropyLoss(reduction="mean")
+                loss_fct = PositiveNegativeLoss(caption_loss_weight=1.0, negative_loss_weight=0.5) # CrossEntropyLoss(reduction="mean")
 
-                loss = loss_fct(shift_logits.view(-1, self.config.text_config.vocab_size), shift_labels.view(-1))
+                loss_dict = loss_fct(logits=shift_logits, labels=shift_labels, output_dict=return_dict)
+                loss_cap = loss_dict["caption_loss"]
+                loss_neg = loss_dict["negative_loss"]
+                loss = loss_cap + loss_neg
+                # loss = loss_fct(shift_logits.view(-1, self.config.text_config.vocab_size), shift_labels.view(-1))
         else:
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
@@ -2253,6 +2260,8 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
 
         return Blip2ForConditionalGenerationModelOutput(
             loss=loss,
+            loss_cap=loss_cap,
+            loss_neg=loss_neg,
             logits=logits,
             vision_outputs=vision_outputs,
             qformer_outputs=query_outputs,
