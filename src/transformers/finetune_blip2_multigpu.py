@@ -1,16 +1,21 @@
 import os 
 import torch
 import pandas as pd
+import numpy as np
+import ast
+import pickle
+import argparse
+import torch.multiprocessing as mp
+
 from torchvision.io import read_image
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
-import numpy as np
-import ast
+from torch.utils.data.distributed import DistributedSampler
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.distributed import init_process_group, destroy_process_group
 from transformers import AutoProcessor, Blip2ForConditionalGeneration
 from peft import LoraConfig, get_peft_model
 from tqdm import tqdm
-import pickle
-import argparse
 
 class ImageCaptioningDataset(Dataset):
     """Costum dataset with image, caption pairs"""
@@ -61,7 +66,11 @@ def collate_fn(batch):
             processed_batch["input_ids"] = text_inputs["input_ids"]
             processed_batch["attention_mask"] = text_inputs["attention_mask"]
     return processed_batch
-           
+
+def ddp_setup():
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    init_process_group(backend="nccl")
+
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Finetune BLIP-2")
     parser.add_argument('--train-csv',
@@ -95,6 +104,7 @@ def parse_arguments():
 
 if __name__ == "__main__":
     args = parse_arguments()
+    ddp_setup()
     processor = AutoProcessor.from_pretrained("Salesforce/blip2-opt-2.7b", model_max_length=512)
     model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-opt-2.7b", torch_dtype=torch.float16, device_map='auto')
 
@@ -111,20 +121,21 @@ if __name__ == "__main__":
     model.print_trainable_parameters()
     
     train_dataset = ImageCaptioningDataset(args.train_csv, processor)
-    train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=64, collate_fn=collate_fn)
+    train_dataloader = DataLoader(train_dataset, shuffle=False, batch_size=64, collate_fn=collate_fn,sampler=DistributedSampler(train_dataset))
     
     val_dataset = ImageCaptioningDataset(args.val_csv, processor)
-    val_dataloader = DataLoader(val_dataset, shuffle=True, batch_size=16, collate_fn=collate_fn)
+    val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=16, collate_fn=collate_fn,sampler=DistributedSampler(val_dataset))
     
     optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
-
-    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     num_epochs = args.num_epochs
     patience = args.patience
     min_eval_loss = float("inf")
     early_stopping_hook = 0
     tracking_information = []
+    device = int(os.environ["LOCAL_RANK"])
+    model.to(device)
+    model = DDP(model, device_ids=[device])
 
     for epoch in range(num_epochs):
         epoch_loss = 0
@@ -133,6 +144,7 @@ if __name__ == "__main__":
         model.train()
         epoch = epoch + 1
         print("Epoch:", epoch)
+        train_dataloader.sampler.set_epoch(epoch)
         for idx, batch in zip(tqdm(range(len(train_dataloader)), desc='Training batch: ...'), train_dataloader):
             input_ids = batch.pop("input_ids").to(device)
             pixel_values = batch.pop("pixel_values").to(device, torch.float16)
@@ -181,3 +193,4 @@ if __name__ == "__main__":
                 break
     pickle.dump(tracking_information, open(f"{args.output_path}/tracking_information.pkl", "wb"))
     print("The finetuning process has done!")
+    destroy_process_group()
