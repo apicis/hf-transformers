@@ -1,7 +1,5 @@
 import torch
-import pandas as pd
 import numpy as np
-import ast
 import random
 import os
 import hydra
@@ -15,10 +13,8 @@ from transformers import AutoProcessor, Blip2ForConditionalGeneration, Florence2
 from peft import LoraConfig, get_peft_model
 from tqdm import tqdm
 from omegaconf import DictConfig, OmegaConf
-from torch.utils.data import Dataset, DataLoader
-from PIL import Image
+from torch.utils.data import DataLoader
 from torch.distributed import init_process_group, destroy_process_group
-
 from transformers.image_captioning_dataset import ImageCaptioningDataset
 
 

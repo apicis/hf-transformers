@@ -2021,7 +2021,6 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
         super().__init__(config)
 
         self.use_negative = use_negative
-        print(f"{self.use_negative=}")
         if self.use_negative:
             self.loss_fct = PositiveNegativeLoss(caption_loss_weight=1.0,
                                             negative_loss_weight=0.5)

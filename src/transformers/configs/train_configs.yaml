@@ -1,0 +1,27 @@
+wandb:
+  use_wandb: False
+  project: "simca"
+  entity: "pavis-hsp"
+  display_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}
+
+model:
+  model_name: "Salesforce/blip2-opt-2.7b"
+  text_input: False
+  model_max_length: 512
+
+dataset:
+  train_csv: "/media/tapicella/Data/data/SImCa_test/fine_tuning/train_coca_ens_clip_gibson.csv"
+  val_csv: "/media/tapicella/Data/data/SImCa_test/fine_tuning/val_coca_ens_clip_gibson.csv"
+  use_augmentation: True
+
+training_setup:
+  multigpu: True
+  seed: 42
+  batch_size: 64
+  learning_rate: 0.0001
+  num_workers: 4
+  epochs: 10
+  save_interval: 1
+  early_stopping: True
+  patience: 3
+  use_negative: False
