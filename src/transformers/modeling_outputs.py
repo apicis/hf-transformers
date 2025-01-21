@@ -869,6 +869,8 @@ class Seq2SeqLMOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
+    loss_cap: Optional[Tuple[torch.FloatTensor]] = None
+    loss_neg: Optional[Tuple[torch.FloatTensor]] = None
     logits: torch.FloatTensor = None
     past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
     decoder_hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None

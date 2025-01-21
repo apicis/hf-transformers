@@ -2017,8 +2017,16 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
     config_class = Blip2Config
     main_input_name = "pixel_values"
 
-    def __init__(self, config: Blip2Config):
+    def __init__(self, config: Blip2Config, use_negative: bool):
         super().__init__(config)
+
+        self.use_negative = use_negative
+        print(f"{self.use_negative=}")
+        if self.use_negative:
+            self.loss_fct = PositiveNegativeLoss(caption_loss_weight=1.0,
+                                            negative_loss_weight=0.5)
+        else:
+            self.loss_fct = CrossEntropyLoss(reduction="mean")
 
         self.vision_model = Blip2VisionModel(config.vision_config)
 
@@ -2232,13 +2240,13 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
                 shift_labels = labels[..., 1:].contiguous().to(logits.device)
 
                 # Flatten the tokens
-                loss_fct = PositiveNegativeLoss(caption_loss_weight=1.0, negative_loss_weight=0.5) # CrossEntropyLoss(reduction="mean")
-
-                loss_dict = loss_fct(logits=shift_logits, labels=shift_labels, output_dict=return_dict)
+            if self.use_negative:
+                loss_dict = self.loss_fct(logits=shift_logits, labels=shift_labels, output_dict=return_dict)
                 loss_cap = loss_dict["caption_loss"]
                 loss_neg = loss_dict["negative_loss"]
                 loss = loss_cap + loss_neg
-                # loss = loss_fct(shift_logits.view(-1, self.config.text_config.vocab_size), shift_labels.view(-1))
+            else:
+                loss = self.loss_fct(shift_logits.view(-1, self.config.text_config.vocab_size), shift_labels.view(-1))
         else:
             outputs = self.language_model(
                 inputs_embeds=inputs_embeds,
@@ -2258,15 +2266,25 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
             output = (logits, vision_outputs, query_outputs, outputs)
             return ((loss,) + output) if loss is not None else output
 
-        return Blip2ForConditionalGenerationModelOutput(
-            loss=loss,
-            loss_cap=loss_cap,
-            loss_neg=loss_neg,
-            logits=logits,
-            vision_outputs=vision_outputs,
-            qformer_outputs=query_outputs,
-            language_model_outputs=outputs,
-        )
+        if self.use_negative:
+            return Blip2ForConditionalGenerationModelOutput(
+                loss=loss,
+                loss_cap=loss_cap,
+                loss_neg=loss_neg,
+                logits=logits,
+                vision_outputs=vision_outputs,
+                qformer_outputs=query_outputs,
+                language_model_outputs=outputs,
+            )
+        else:
+            return Blip2ForConditionalGenerationModelOutput(
+                loss=loss,
+                logits=logits,
+                vision_outputs=vision_outputs,
+                qformer_outputs=query_outputs,
+                language_model_outputs=outputs,
+            )
+
 
     @torch.no_grad()
     def generate(
