@@ -47,8 +47,9 @@ class ImageCaptioningDataset(Dataset):
         bbox_exp = bbox_exp_original.copy()
         if self.augmentation:
             augmented = self.augmentation(image=img_array_original, bboxes=[bbox_exp_original])
-            img_array = augmented['image']
-            bbox_exp = augmented['bboxes'][0]
+            if len(augmented['bboxes']) != 0:
+                img_array = augmented['image']
+                bbox_exp = augmented['bboxes'][0]
 
         img = Image.fromarray(img_array).convert('RGB')
 
@@ -64,7 +65,7 @@ class ImageCaptioningDataset(Dataset):
         # remove batch dimension
         encoding = {k: v.squeeze() for k, v in encoding.items()}
         encoding["text"] = caption
-        return encoding # , img_array_original, img_array, bbox_exp_original, bbox_exp
+        return encoding , img_array_original, img_array, bbox_exp_original, bbox_exp
 
 
 if __name__ == "__main__":
@@ -76,8 +77,8 @@ if __name__ == "__main__":
     csv_path = "/media/tapicella/Data/data/SImCa_test/fine_tuning/train_coca_ens_clip_gibson.csv"
     augmentation = A.Compose([
         A.HorizontalFlip(p=0.5),
-        A.GaussNoise(var_limit=(0.0, 100.0), mean=0, p=0.5),
-        A.Affine(rotate=[-10, 10], shear=[-10, 10], scale=1, p=0.5)
+        A.GaussNoise(std_range=(0.0, 0.05), mean_range=(0.0, 0.0), p=0.5),
+        A.Affine(rotate=(-10.0, 10.0), shear=(-10.0, 10.0), scale=1, p=0.5)
     ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=[]))
     processor = AutoProcessor.from_pretrained("Salesforce/blip2-opt-2.7b", model_max_length=512)
 
@@ -99,4 +100,4 @@ if __name__ == "__main__":
         img_rect = cv2.rectangle(cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR),(int(bbox_exp[0]),int(bbox_exp[1])),(int(bbox_exp[2]),int(bbox_exp[3])),(0,255,0),3)
         cv2.imshow("Bbox original", img_rect_original)
         cv2.imshow("Bbox", img_rect)
-        cv2.waitKey(0)
+        cv2.waitKey(10)

@@ -87,25 +87,32 @@ class Trainer:
                                                 self.multigpu)
             torch.cuda.empty_cache()
 
-            # Save checkpoint
-            if epoch % self.save_interval == 0 and self.device == 0:
-                if self.use_wandb:
-                    save_path = os.path.join(os.getcwd(), "checkpoints", self.run.project, self.run.id,
-                                             f"checkpoint_{epoch}.pt")
+            save_logs = True
+            if self.early_stopping:
+                if eval_loss >= min_eval_loss:
+                    save_logs = False
+                    early_stopping_hook += 1
+                    min_eval_loss = eval_loss
+                    if early_stopping_hook >= self.patience:
+                        print("Early stopping!")
+                        break
                 else:
-                    save_path = os.path.join(os.getcwd(), "checkpoints", "blip2", f"checkpoint_{epoch}.pt")
-                if self.multigpu:
-                    self.model.module.save_pretrained(save_path, from_pt=True)
-                else:
-                    self.model.save_pretrained(save_path, from_pt=True)
-            if eval_loss >= min_eval_loss and self.early_stopping:
-                early_stopping_hook += 1
-                min_eval_loss = eval_loss
-                if early_stopping_hook > self.patience:
-                    break
-            else:
-                min_eval_loss = 0
-                early_stopping_hook = 0
+                    min_eval_loss = 0
+                    early_stopping_hook = 0
+                    save_logs = True
+
+            if save_logs:
+                # Save checkpoint
+                if epoch % self.save_interval == 0 and self.device == 0:
+                    if self.use_wandb:
+                        save_path = os.path.join(os.getcwd(), "checkpoints", self.run.project, self.run.id,
+                                                     f"checkpoint_{epoch}.pt")
+                    else:
+                        save_path = os.path.join(os.getcwd(), "checkpoints", "blip2", f"checkpoint_{epoch}.pt")
+                    if self.multigpu:
+                        self.model.module.save_pretrained(save_path, from_pt=True)
+                    else:
+                        self.model.save_pretrained(save_path, from_pt=True)
 
     def train_one_epoch(self, model, train_dataloader, epoch, optimizer, device, use_wandb, use_negative, multigpu):
         epoch_loss = 0
@@ -270,8 +277,8 @@ def main(config: DictConfig):
     if use_augmentation:
         augmentation = A.Compose([
             A.HorizontalFlip(p=0.5),
-            A.GaussNoise(var_limit=(0.0, 100.0), mean=0, p=0.5),
-            A.Affine(rotate=[-10, 10], shear=[-10, 10], scale=1, p=0.5)
+            A.GaussNoise(std_range=(0.0, 0.05), mean_range=(0.0, 0.0), p=0.5),
+            A.Affine(rotate=(-10.0, 10.0), shear=(-10.0, 10.0), scale=1, p=0.5)
         ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=[]))
     train_dataset = ImageCaptioningDataset(train_csv, processor, augmentation, text_input=text_input)
     val_dataset = ImageCaptioningDataset(val_csv, processor, augmentation=None, text_input=text_input)
