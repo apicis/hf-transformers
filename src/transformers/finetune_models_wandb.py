@@ -286,7 +286,7 @@ def main(config: DictConfig):
         train_dataloader = DataLoader(train_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers,
                                       sampler=DistributedSampler(train_dataset), collate_fn=collate_fn)
         val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers,
-                                    sampler=DistributedSampler(train_dataset), collate_fn=collate_fn)
+                                    sampler=DistributedSampler(val_dataset), collate_fn=collate_fn)
     else:
         train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers,
                                       collate_fn=collate_fn)
