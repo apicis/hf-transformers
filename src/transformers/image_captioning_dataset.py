@@ -43,6 +43,8 @@ class ImageCaptioningDataset(Dataset):
                     bb[2] + self.margin if (bb[2] + self.margin) < img_array_original.shape[0] else (img_array_original.shape[0] - 1),
                     bb[3] + self.margin if (bb[3] + self.margin) < img_array_original.shape[1] else (img_array_original.shape[1] - 1)]
 
+        img_array = img_array_original.copy()
+        bbox_exp = bbox_exp_original.copy()
         if self.augmentation:
             augmented = self.augmentation(image=img_array_original, bboxes=[bbox_exp_original])
             img_array = augmented['image']
