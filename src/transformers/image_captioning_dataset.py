@@ -65,7 +65,7 @@ class ImageCaptioningDataset(Dataset):
         # remove batch dimension
         encoding = {k: v.squeeze() for k, v in encoding.items()}
         encoding["text"] = caption
-        return encoding , img_array_original, img_array, bbox_exp_original, bbox_exp
+        return encoding # , img_array_original, img_array, bbox_exp_original, bbox_exp
 
 
 if __name__ == "__main__":
