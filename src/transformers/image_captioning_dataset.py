@@ -36,7 +36,8 @@ class ImageCaptioningDataset(Dataset):
         img_path = self.annotations['filename'][idx]
         caption = self.annotations['caption'][idx]
 
-        img_array_original = np.load(img_path)[:, :, :3]
+        # img_array_original = np.load(img_path)[:, :, :3]
+        img_array_original = np.load(img_path, allow_pickle=True)['arr_0'].item()['image']
         bb = ast.literal_eval(self.annotations['bounding_box'][idx])
         bbox_exp_original = [bb[0] - self.margin if (bb[0] - self.margin) >= 0 else 0,
                     bb[1] - self.margin if (bb[1] - self.margin) >= 0 else 0,
@@ -57,11 +58,22 @@ class ImageCaptioningDataset(Dataset):
             prompt = self.text_input + "<loc_{}><loc_{}><loc_{}><loc_{}>".format(int(bbox_exp[0]), int(bbox_exp[1]),
                                                                                  int(bbox_exp[2]), int(
                     bbox_exp[3])) if self.text_input == '<REGION_TO_DESCRIPTION>' else self.text_input
-            img_final = img if self.text_input == '<REGION_TO_DESCRIPTION>' else img.crop(bbox_exp)
-            encoding = self.processor(text=prompt, images=img_final, return_tensors="pt")
+            try:
+                img_final = img if self.text_input == '<REGION_TO_DESCRIPTION>' else img.crop(bbox_exp)
+                encoding = self.processor(text=prompt, images=img_final, return_tensors="pt")
+            except:
+                img = Image.fromarray(img_array_original).convert('RGB')
+                img_final = img if self.text_input == '<REGION_TO_DESCRIPTION>' else img.crop(bbox_exp_original)
+                encoding = self.processor(text=prompt, images=img_final, return_tensors="pt")
         else:
-            img_final = img.crop(bbox_exp)
-            encoding = self.processor(images=img_final, return_tensors="pt")
+            try:
+                img_final = img.crop(bbox_exp)
+                encoding = self.processor(images=img_final, return_tensors="pt")
+            except:
+                img = Image.fromarray(img_array_original).convert('RGB')
+                img_final = img.crop(bbox_exp_original)
+                encoding = self.processor(images=img_final, return_tensors="pt")
+
         # remove batch dimension
         encoding = {k: v.squeeze() for k, v in encoding.items()}
         encoding["text"] = caption

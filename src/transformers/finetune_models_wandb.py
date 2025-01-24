@@ -19,8 +19,24 @@ from transformers.image_captioning_dataset import ImageCaptioningDataset
 
 
 def ddp_setup():
-    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-    init_process_group(backend="nccl")
+    """
+        This function sets up the distributed data parallel environment.
+        It is used in the main function to set the rank, local rank and world size
+    device
+        Returns: rank, local_rank, world_size
+    """
+    if os.environ.get("OMPI_COMMAND"):
+        # from mpirun
+        rank = int(os.environ["OMPI_COMM_WORLD_RANK"])
+        local_rank = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
+        world_size = int(os.environ["OMPI_COMM_WORLD_SIZE"])
+    else:
+        # from slurm
+        rank = int(os.environ["SLURM_PROCID"])
+        local_rank = int(os.environ["SLURM_LOCALID"])
+        world_size = int(os.environ["SLURM_NPROCS"])
+
+    return rank, local_rank, world_size
 
 
 def collate_fn(batch):
@@ -225,8 +241,10 @@ def main(config: DictConfig):
 
     # Initialize device
     if multigpu:
-        ddp_setup()
-        device = int(os.environ["LOCAL_RANK"])
+        rank, local_rank, world_size = ddp_setup()
+        device = local_rank
+        # init the distributed process group
+        init_process_group(backend="nccl", rank=rank, world_size=world_size)
     else:
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -315,6 +333,5 @@ def main(config: DictConfig):
 
 
 if __name__ == "__main__":
-    torch.backends.cudnn.benchmark = True
     torch.cuda.empty_cache()
     main()
