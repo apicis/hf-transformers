@@ -83,7 +83,7 @@ class Trainer:
         self.multigpu = multigpu
 
     def training_loop(self):
-        min_eval_loss = 0
+        min_eval_loss = float('inf')
         early_stopping_hook = 0
         for epoch in range(1, self.num_epochs + 1):
 
@@ -108,12 +108,11 @@ class Trainer:
                 if eval_loss >= min_eval_loss:
                     save_logs = False
                     early_stopping_hook += 1
-                    min_eval_loss = eval_loss
                     if early_stopping_hook >= self.patience:
                         print("Early stopping!")
                         break
                 else:
-                    min_eval_loss = 0
+                    min_eval_loss = eval_loss
                     early_stopping_hook = 0
                     save_logs = True
 
