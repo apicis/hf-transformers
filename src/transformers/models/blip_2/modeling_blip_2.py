@@ -25,7 +25,9 @@ from torch.nn import CrossEntropyLoss
 
 from ...activations import ACT2FN
 from ...generation import GenerationMixin
+from ...loss.ce_contrastive_loss import CrossEntropyAndTripletLoss
 from ...loss.positive_negative_loss import PositiveNegativeLoss
+from ...loss.positive_negative_triplet_loss import PositiveNegativeTripletLoss
 from ...modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -44,7 +46,6 @@ from ...utils import (
 )
 from ..auto import AutoModelForCausalLM, AutoModelForSeq2SeqLM
 from .configuration_blip_2 import Blip2Config, Blip2QFormerConfig, Blip2VisionConfig
-
 
 logger = logging.get_logger(__name__)
 
@@ -72,6 +73,7 @@ class Blip2ForConditionalGenerationModelOutput(ModelOutput):
     loss: Optional[Tuple[torch.FloatTensor]] = None
     loss_cap: Optional[Tuple[torch.FloatTensor]] = None
     loss_neg: Optional[Tuple[torch.FloatTensor]] = None
+    loss_trip: Optional[Tuple[torch.FloatTensor]] = None
     logits: Optional[Tuple[torch.FloatTensor]] = None
     vision_outputs: Optional[torch.FloatTensor] = None
     qformer_outputs: Optional[Tuple[torch.FloatTensor]] = None
@@ -228,7 +230,7 @@ class Blip2VisionEmbeddings(nn.Module):
         new_height = height // self.patch_size
         new_width = width // self.patch_size
 
-        sqrt_num_positions = torch_int(num_positions**0.5)
+        sqrt_num_positions = torch_int(num_positions ** 0.5)
         patch_pos_embed = patch_pos_embed.reshape(1, sqrt_num_positions, sqrt_num_positions, dim)
         patch_pos_embed = patch_pos_embed.permute(0, 3, 1, 2)
 
@@ -272,7 +274,7 @@ class Blip2Attention(nn.Module):
                 f"embed_dim must be divisible by num_heads (got `embed_dim`: {self.embed_dim} and `num_heads`:"
                 f" {self.num_heads})."
             )
-        self.scale = self.head_dim**-0.5
+        self.scale = self.head_dim ** -0.5
         self.dropout = nn.Dropout(config.attention_dropout)
 
         # small tweak here compared to CLIP, no bias here
@@ -295,10 +297,10 @@ class Blip2Attention(nn.Module):
         return tensor.view(bsz, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
     def forward(
-        self,
-        hidden_states: torch.Tensor,
-        head_mask: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = False,
+            self,
+            hidden_states: torch.Tensor,
+            head_mask: Optional[torch.Tensor] = None,
+            output_attentions: Optional[bool] = False,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
 
@@ -366,10 +368,10 @@ class Blip2EncoderLayer(nn.Module):
         self.layer_norm2 = nn.LayerNorm(self.embed_dim, eps=config.layer_norm_eps)
 
     def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: torch.Tensor,
-        output_attentions: Optional[bool] = False,
+            self,
+            hidden_states: torch.Tensor,
+            attention_mask: torch.Tensor,
+            output_attentions: Optional[bool] = False,
     ) -> Tuple[torch.FloatTensor]:
         """
         Args:
@@ -640,12 +642,12 @@ class Blip2Encoder(nn.Module):
         self.gradient_checkpointing = False
 
     def forward(
-        self,
-        inputs_embeds,
-        attention_mask: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+            self,
+            inputs_embeds,
+            attention_mask: Optional[torch.Tensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
     ) -> Union[Tuple, BaseModelOutput]:
         r"""
         Args:
@@ -728,12 +730,12 @@ class Blip2VisionModel(Blip2PreTrainedModel):
     @add_start_docstrings_to_model_forward(BLIP_2_VISION_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=BaseModelOutputWithPooling, config_class=Blip2VisionConfig)
     def forward(
-        self,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        interpolate_pos_encoding: bool = False,
+            self,
+            pixel_values: Optional[torch.FloatTensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
+            interpolate_pos_encoding: bool = False,
     ) -> Union[Tuple, BaseModelOutputWithPooling]:
         r"""
         Returns:
@@ -824,14 +826,14 @@ class Blip2QFormerMultiHeadAttention(nn.Module):
         return x.permute(0, 2, 1, 3)
 
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        past_key_value=None,
-        output_attentions=False,
+            self,
+            hidden_states,
+            attention_mask=None,
+            head_mask=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            past_key_value=None,
+            output_attentions=False,
     ):
         # If this is instantiated as a cross-attention module, the keys
         # and values come from an encoder; the attention mask needs to be
@@ -950,14 +952,14 @@ class Blip2QFormerAttention(nn.Module):
         self.pruned_heads = self.pruned_heads.union(heads)
 
     def forward(
-        self,
-        hidden_states: torch.Tensor,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        output_attentions: Optional[bool] = False,
+            self,
+            hidden_states: torch.Tensor,
+            attention_mask: Optional[torch.FloatTensor] = None,
+            head_mask: Optional[torch.FloatTensor] = None,
+            encoder_hidden_states: Optional[torch.FloatTensor] = None,
+            encoder_attention_mask: Optional[torch.FloatTensor] = None,
+            past_key_value: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+            output_attentions: Optional[bool] = False,
     ) -> Tuple[torch.Tensor]:
         self_outputs = self.attention(
             hidden_states,
@@ -1027,15 +1029,15 @@ class Blip2QFormerLayer(nn.Module):
         self.output_query = Blip2QFormerOutput(config)
 
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        past_key_value=None,
-        output_attentions=False,
-        query_length=0,
+            self,
+            hidden_states,
+            attention_mask=None,
+            head_mask=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            past_key_value=None,
+            output_attentions=False,
+            query_length=0,
     ):
         # decoder uni-directional self-attention cached key/values tuple is at positions 1,2
         self_attn_past_key_value = past_key_value[:2] if past_key_value is not None else None
@@ -1118,18 +1120,18 @@ class Blip2QFormerEncoder(nn.Module):
         self.gradient_checkpointing = False
 
     def forward(
-        self,
-        hidden_states,
-        attention_mask=None,
-        head_mask=None,
-        encoder_hidden_states=None,
-        encoder_attention_mask=None,
-        past_key_values=None,
-        use_cache=None,
-        output_attentions=False,
-        output_hidden_states=False,
-        return_dict=True,
-        query_length=0,
+            self,
+            hidden_states,
+            attention_mask=None,
+            head_mask=None,
+            encoder_hidden_states=None,
+            encoder_attention_mask=None,
+            past_key_values=None,
+            use_cache=None,
+            output_attentions=False,
+            output_hidden_states=False,
+            return_dict=True,
+            query_length=0,
     ):
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -1218,10 +1220,10 @@ class Blip2TextEmbeddings(nn.Module):
         self.position_embedding_type = getattr(config, "position_embedding_type", "absolute")
 
     def forward(
-        self,
-        input_ids: Optional[torch.FloatTensor] = None,
-        position_ids: Optional[torch.LongTensor] = None,
-        query_embeds: Optional[torch.FloatTensor] = None,
+            self,
+            input_ids: Optional[torch.FloatTensor] = None,
+            position_ids: Optional[torch.LongTensor] = None,
+            query_embeds: Optional[torch.FloatTensor] = None,
     ) -> torch.Tensor:
         if input_ids is not None:
             seq_length = input_ids.size()[1]
@@ -1277,11 +1279,11 @@ class Blip2QFormerModel(Blip2PreTrainedModel):
             self.encoder.layer[layer].attention.prune_heads(heads)
 
     def get_extended_attention_mask(
-        self,
-        attention_mask: torch.Tensor,
-        input_shape: Tuple[int],
-        device: torch.device,
-        has_query: bool = False,
+            self,
+            attention_mask: torch.Tensor,
+            input_shape: Tuple[int],
+            device: torch.device,
+            has_query: bool = False,
     ) -> torch.Tensor:
         """
         Makes broadcastable attention and causal masks so that future and masked tokens are ignored.
@@ -1322,18 +1324,18 @@ class Blip2QFormerModel(Blip2PreTrainedModel):
         return extended_attention_mask
 
     def forward(
-        self,
-        query_embeds: torch.FloatTensor,
-        query_length: Optional[int] = None,
-        attention_mask: Optional[torch.FloatTensor] = None,
-        head_mask: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
-        use_cache: Optional[bool] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+            self,
+            query_embeds: torch.FloatTensor,
+            query_length: Optional[int] = None,
+            attention_mask: Optional[torch.FloatTensor] = None,
+            head_mask: Optional[torch.FloatTensor] = None,
+            encoder_hidden_states: Optional[torch.FloatTensor] = None,
+            encoder_attention_mask: Optional[torch.FloatTensor] = None,
+            past_key_values: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+            use_cache: Optional[bool] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
     ) -> Union[Tuple[torch.Tensor], BaseModelOutputWithPoolingAndCrossAttentions]:
         r"""
         encoder_hidden_states  (`torch.FloatTensor` of shape `(batch_size, sequence_length, hidden_size)`, `optional`):
@@ -1497,15 +1499,15 @@ class Blip2Model(Blip2PreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BLIP_2_TEXT_INPUTS_DOCSTRING)
     def get_text_features(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        decoder_input_ids: Optional[torch.Tensor] = None,
-        decoder_attention_mask: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+            self,
+            input_ids: Optional[torch.Tensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            decoder_input_ids: Optional[torch.Tensor] = None,
+            decoder_attention_mask: Optional[torch.Tensor] = None,
+            labels: Optional[torch.Tensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
     ):
         r"""
         Returns:
@@ -1556,12 +1558,12 @@ class Blip2Model(Blip2PreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BLIP_2_VISION_INPUTS_DOCSTRING)
     def get_image_features(
-        self,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        interpolate_pos_encoding: bool = False,
+            self,
+            pixel_values: Optional[torch.FloatTensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
+            interpolate_pos_encoding: bool = False,
     ):
         r"""
         Returns:
@@ -1602,12 +1604,12 @@ class Blip2Model(Blip2PreTrainedModel):
 
     @add_start_docstrings_to_model_forward(BLIP_2_INPUTS_DOCSTRING)
     def get_qformer_features(
-        self,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
-        interpolate_pos_encoding: bool = False,
+            self,
+            pixel_values: Optional[torch.FloatTensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
+            interpolate_pos_encoding: bool = False,
     ):
         r"""
         Returns:
@@ -1664,17 +1666,17 @@ class Blip2Model(Blip2PreTrainedModel):
     @add_start_docstrings_to_model_forward(BLIP_2_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Blip2ForConditionalGenerationModelOutput, config_class=Blip2VisionConfig)
     def forward(
-        self,
-        pixel_values: torch.FloatTensor,
-        input_ids: torch.FloatTensor,
-        attention_mask: Optional[torch.LongTensor] = None,
-        decoder_input_ids: Optional[torch.LongTensor] = None,
-        decoder_attention_mask: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        labels: Optional[torch.LongTensor] = None,
-        return_dict: Optional[bool] = None,
-        interpolate_pos_encoding: bool = False,
+            self,
+            pixel_values: torch.FloatTensor,
+            input_ids: torch.FloatTensor,
+            attention_mask: Optional[torch.LongTensor] = None,
+            decoder_input_ids: Optional[torch.LongTensor] = None,
+            decoder_attention_mask: Optional[torch.LongTensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            labels: Optional[torch.LongTensor] = None,
+            return_dict: Optional[bool] = None,
+            interpolate_pos_encoding: bool = False,
     ) -> Union[Tuple, Blip2ForConditionalGenerationModelOutput]:
         r"""
         Returns:
@@ -1754,7 +1756,7 @@ class Blip2Model(Blip2PreTrainedModel):
             # we compute the loss here since we need to take into account the sequence length of the query embeds
             if labels is not None:
                 labels = labels.to(logits.device)
-                logits = logits[:, -labels.size(1) :, :]
+                logits = logits[:, -labels.size(1):, :]
                 # Shift so that tokens < n predict n
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = labels[..., 1:].contiguous().to(logits.device)
@@ -1823,13 +1825,13 @@ class Blip2TextModelWithProjection(Blip2PreTrainedModel):
     @add_start_docstrings_to_model_forward(BLIP_2_TEXT_WITH_PROJECTION_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Blip2TextModelOutput, config_class=Blip2Config)
     def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        position_ids: Optional[torch.Tensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+            self,
+            input_ids: Optional[torch.Tensor] = None,
+            attention_mask: Optional[torch.Tensor] = None,
+            position_ids: Optional[torch.Tensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
     ) -> Union[Tuple, Blip2TextModelOutput]:
         r"""
         Returns:
@@ -1920,11 +1922,11 @@ class Blip2VisionModelWithProjection(Blip2PreTrainedModel):
     @add_start_docstrings_to_model_forward(BLIP_2_VISION_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Blip2VisionModelOutput, config_class=Blip2Config)
     def forward(
-        self,
-        pixel_values: Optional[torch.FloatTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+            self,
+            pixel_values: Optional[torch.FloatTensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
     ) -> Union[Tuple, Blip2VisionModelOutput]:
         r"""
         Returns:
@@ -2017,13 +2019,21 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
     config_class = Blip2Config
     main_input_name = "pixel_values"
 
-    def __init__(self, config: Blip2Config, use_negative: bool):
+    def __init__(self, config: Blip2Config, use_negative: bool, use_triplet: bool):
         super().__init__(config)
 
         self.use_negative = use_negative
-        if self.use_negative:
+        self.use_triplet = use_triplet
+        if self.use_negative and self.use_triplet:
+            self.loss_fct = PositiveNegativeTripletLoss(caption_loss_weight=1.0,
+                                                        triplet_loss_weight=0.5,
+                                                        negative_loss_weight=0.5)
+        elif self.use_triplet:
+            self.loss_fct = CrossEntropyAndTripletLoss(caption_loss_weight=1.0,
+                                                       triplet_loss_weight=0.5)
+        elif self.use_negative:
             self.loss_fct = PositiveNegativeLoss(caption_loss_weight=1.0,
-                                            negative_loss_weight=0.5)
+                                                 negative_loss_weight=0.5)
         else:
             self.loss_fct = CrossEntropyLoss(reduction="mean")
 
@@ -2093,17 +2103,17 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
     @add_start_docstrings_to_model_forward(BLIP_2_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Blip2ForConditionalGenerationModelOutput, config_class=Blip2VisionConfig)
     def forward(
-        self,
-        pixel_values: torch.FloatTensor,
-        input_ids: torch.FloatTensor,
-        attention_mask: Optional[torch.LongTensor] = None,
-        decoder_input_ids: Optional[torch.LongTensor] = None,
-        decoder_attention_mask: Optional[torch.LongTensor] = None,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        labels: Optional[torch.LongTensor] = None,
-        return_dict: Optional[bool] = None,
-        interpolate_pos_encoding: bool = False,
+            self,
+            pixel_values: torch.FloatTensor,
+            input_ids: torch.FloatTensor,
+            attention_mask: Optional[torch.LongTensor] = None,
+            decoder_input_ids: Optional[torch.LongTensor] = None,
+            decoder_attention_mask: Optional[torch.LongTensor] = None,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            labels: Optional[torch.LongTensor] = None,
+            return_dict: Optional[bool] = None,
+            interpolate_pos_encoding: bool = False,
     ) -> Union[Tuple, Blip2ForConditionalGenerationModelOutput]:
         r"""
         Returns:
@@ -2233,17 +2243,22 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
             # we compute the loss here since we need to take into account the sequence length of the query embeds
             if labels is not None:
                 labels = labels.to(logits.device)
-                logits = logits[:, -labels.size(1) :, :]
+                logits = logits[:, -labels.size(1):, :]
                 # Shift so that tokens < n predict n
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = labels[..., 1:].contiguous().to(logits.device)
 
                 # Flatten the tokens
-            if self.use_negative:
+            if self.use_negative or self.use_triplet:
                 loss_dict = self.loss_fct(logits=shift_logits, labels=shift_labels, output_dict=return_dict)
                 loss_cap = loss_dict["caption_loss"]
-                loss_neg = loss_dict["negative_loss"]
-                loss = loss_cap + loss_neg
+                loss_neg = 0.0
+                loss_triplet = 0.0
+                if self.use_negative:
+                    loss_neg = loss_dict["negative_loss"]
+                if self.use_triplet:
+                    loss_triplet = loss_dict["triplet_loss"]
+                loss = loss_cap + loss_neg + loss_triplet
             else:
                 loss = self.loss_fct(shift_logits.view(-1, self.config.text_config.vocab_size), shift_labels.view(-1))
         else:
@@ -2265,11 +2280,12 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
             output = (logits, vision_outputs, query_outputs, outputs)
             return ((loss,) + output) if loss is not None else output
 
-        if self.use_negative:
+        if self.use_negative or self.use_triplet:
             return Blip2ForConditionalGenerationModelOutput(
                 loss=loss,
                 loss_cap=loss_cap,
                 loss_neg=loss_neg,
+                loss_trip=loss_triplet,
                 logits=logits,
                 vision_outputs=vision_outputs,
                 qformer_outputs=query_outputs,
@@ -2284,15 +2300,14 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
                 language_model_outputs=outputs,
             )
 
-
     @torch.no_grad()
     def generate(
-        self,
-        pixel_values: torch.FloatTensor,
-        input_ids: Optional[torch.LongTensor] = None,
-        attention_mask: Optional[torch.LongTensor] = None,
-        interpolate_pos_encoding: bool = False,
-        **generate_kwargs,
+            self,
+            pixel_values: torch.FloatTensor,
+            input_ids: Optional[torch.LongTensor] = None,
+            attention_mask: Optional[torch.LongTensor] = None,
+            interpolate_pos_encoding: bool = False,
+            **generate_kwargs,
     ) -> torch.LongTensor:
         """
         Overrides `generate` function to be able to use the model as a conditional generator.
@@ -2366,7 +2381,7 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
             # TODO (joao, raushan): refactor `generate` to avoid these operations with VLMs
             if not self.language_model.config.is_encoder_decoder:
                 generate_kwargs["max_length"] = (
-                    generate_kwargs.get("max_length", 20) + language_model_inputs.shape[1] - 1
+                        generate_kwargs.get("max_length", 20) + language_model_inputs.shape[1] - 1
                 )
                 generate_kwargs["min_length"] = generate_kwargs.get("min_length", 0) + language_model_inputs.shape[1]
 
@@ -2421,14 +2436,14 @@ class Blip2ForImageTextRetrieval(Blip2PreTrainedModel):
     @add_start_docstrings_to_model_forward(BLIP2_IMAGE_TEXT_RETRIEVAL_INPUTS_DOCSTRING)
     @replace_return_docstrings(output_type=Blip2ImageTextMatchingModelOutput, config_class=Blip2Config)
     def forward(
-        self,
-        pixel_values: torch.FloatTensor,
-        input_ids: torch.LongTensor,
-        attention_mask: Optional[torch.LongTensor] = None,
-        use_image_text_matching_head: Optional[bool] = False,
-        output_attentions: Optional[bool] = None,
-        output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
+            self,
+            pixel_values: torch.FloatTensor,
+            input_ids: torch.LongTensor,
+            attention_mask: Optional[torch.LongTensor] = None,
+            use_image_text_matching_head: Optional[bool] = False,
+            output_attentions: Optional[bool] = None,
+            output_hidden_states: Optional[bool] = None,
+            return_dict: Optional[bool] = None,
     ) -> Union[Tuple, Blip2ImageTextMatchingModelOutput]:
         r"""
         Returns:
