@@ -143,12 +143,29 @@ class ImageCaptioningDatasetTriplet(Dataset):
         positive_image = Image.fromarray(positive_array).convert('RGB')
         negative_image = Image.fromarray(negative_array).convert('RGB')
 
-        img_final = anchor_image.crop(anchor_bbox_exp)
-        anchor_encoding = self.processor(images=img_final, return_tensors="pt")
-        img_final = positive_image.crop(positive_bbox_exp)
-        positive_encoding = self.processor(images=img_final, return_tensors="pt")
-        img_final = negative_image.crop(negative_bbox_exp)
-        negative_encoding = self.processor(images=img_final, return_tensors="pt")
+        try:
+            img_final = anchor_image.crop(anchor_bbox_exp)
+            anchor_encoding = self.processor(images=img_final, return_tensors="pt")
+        except:
+            anchor_image = Image.fromarray(anchor_array_original).convert('RGB')
+            img_final = anchor_image.crop(anchor_bb_original)
+            anchor_encoding = self.processor(images=img_final, return_tensors="pt")
+
+        try:
+            img_final = positive_image.crop(positive_bbox_exp)
+            positive_encoding = self.processor(images=img_final, return_tensors="pt")
+        except:
+            positive_image = Image.fromarray(positive_array_original).convert('RGB')
+            img_final = positive_image.crop(positive_bb_original)
+            positive_encoding = self.processor(images=img_final, return_tensors="pt")
+
+        try:
+            img_final = negative_image.crop(negative_bbox_exp)
+            negative_encoding = self.processor(images=img_final, return_tensors="pt")
+        except:
+            negative_image = Image.fromarray(negative_array_original).convert('RGB')
+            img_final = negative_image.crop(negative_bb_original)
+            negative_encoding = self.processor(images=img_final, return_tensors="pt")
 
         # remove batch dimension
         anchor_encoding = {k: v.squeeze() for k, v in anchor_encoding.items()}
