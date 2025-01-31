@@ -16,6 +16,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 from torch.distributed import init_process_group, destroy_process_group
 from transformers.image_captioning_dataset import ImageCaptioningDataset
+from transformers.image_captioning_dataset_triplet import ImageCaptioningDatasetTriplet
 
 
 def ddp_setup():
@@ -54,6 +55,31 @@ def collate_fn(batch):
     return processed_batch
 
 
+def collate_fn_triplet(batch):
+    # pad the input_ids and attention_mask
+    keys = ["pixel_values", "input_ids", "attention_mask"]
+    processed_batch = {key: [] for key in keys}
+    temp_value = []
+    for b in batch:
+        for key in b[0].keys():
+            anchor_value = b[0][key]
+            positive_value = b[1][key]
+            negative_value = b[2][key]
+            if key == "pixel_values":
+                processed_batch[key].append(anchor_value)
+                processed_batch[key].append(positive_value)
+                processed_batch[key].append(negative_value)
+            elif key == "text":
+                temp_value.append(anchor_value)
+                temp_value.append(positive_value)
+                temp_value.append(negative_value)
+    text_inputs = processor.tokenizer(temp_value, padding=True, return_tensors="pt")
+    processed_batch["input_ids"] = text_inputs["input_ids"]
+    processed_batch["attention_mask"] = text_inputs["attention_mask"]
+    processed_batch["pixel_values"] = torch.stack(processed_batch["pixel_values"],dim=0)
+    return processed_batch
+
+
 class Trainer:
     def __init__(self, model,
                  num_epochs,
@@ -63,6 +89,7 @@ class Trainer:
                  device,
                  use_wandb,
                  use_negative,
+                 use_triplet,
                  save_interval,
                  run,
                  early_stopping,
@@ -76,6 +103,7 @@ class Trainer:
         self.device = device
         self.use_wandb = use_wandb
         self.use_negative = use_negative
+        self.use_triplet = use_triplet
         self.save_interval = save_interval
         self.run = run
         self.early_stopping = early_stopping
@@ -92,7 +120,7 @@ class Trainer:
             if self.multigpu:
                 self.train_dataloader.sampler.set_epoch(epoch)
             self.train_one_epoch(self.model, self.train_dataloader, epoch, self.optimizer, self.device, self.use_wandb,
-                                 self.use_negative, self.multigpu)
+                                 self.use_negative, self.use_triplet, self.multigpu)
             torch.cuda.empty_cache()
 
             # One epoch validation loop
@@ -121,7 +149,7 @@ class Trainer:
                 if epoch % self.save_interval == 0 and self.device == 0:
                     if self.use_wandb:
                         save_path = os.path.join(os.getcwd(), "checkpoints", self.run.project, self.run.id,
-                                                     f"checkpoint_{epoch}.pt")
+                                                 f"checkpoint_{epoch}.pt")
                     else:
                         save_path = os.path.join(os.getcwd(), "checkpoints", "blip2", f"checkpoint_{epoch}.pt")
                     if self.multigpu:
@@ -129,11 +157,14 @@ class Trainer:
                     else:
                         self.model.save_pretrained(save_path, from_pt=True)
 
-    def train_one_epoch(self, model, train_dataloader, epoch, optimizer, device, use_wandb, use_negative, multigpu):
+    def train_one_epoch(self, model, train_dataloader, epoch, optimizer, device, use_wandb, use_negative, use_triplet, multigpu):
         epoch_loss = 0
-        if use_negative:
+        if use_negative or use_triplet:
             cap_loss = 0
-            neg_loss = 0
+            if use_negative:
+                neg_loss = 0
+            if use_triplet:
+                triplet_loss = 0
         train_dataloader_len = len(train_dataloader)
         for _, batch in enumerate(tqdm(train_dataloader)):
             input_ids = batch["input_ids"].to(device)
@@ -147,9 +178,12 @@ class Trainer:
 
             optimizer.zero_grad()
             loss = outputs["loss"]
-            if use_negative:
+            if use_negative or use_triplet:
                 cap_loss += outputs["loss_cap"]
-                neg_loss += outputs["loss_neg"]
+                if use_negative:
+                    neg_loss += outputs["loss_neg"]
+                if use_triplet:
+                    triplet_loss += outputs["loss_trip"]
             epoch_loss += loss
             loss.backward()
             optimizer.step()
@@ -158,24 +192,33 @@ class Trainer:
         train_dataloader_len = torch.tensor(train_dataloader_len, dtype=torch.int, device=device)
         if multigpu:
             dist.all_reduce(epoch_loss, op=dist.ReduceOp.SUM)
-            if use_negative:
+            if use_negative or use_triplet:
                 dist.all_reduce(cap_loss, op=dist.ReduceOp.SUM)
-                dist.all_reduce(neg_loss, op=dist.ReduceOp.SUM)
+                if use_negative:
+                    dist.all_reduce(neg_loss, op=dist.ReduceOp.SUM)
+                if use_triplet:
+                    dist.all_reduce(triplet_loss, op=dist.ReduceOp.SUM)
             dist.all_reduce(train_dataloader_len, op=dist.ReduceOp.SUM)
 
         if device == 0 or device == "cuda":
             epoch_total_loss = (epoch_loss / train_dataloader_len).item()
-            if use_negative:
+            msg = "Epoch: {} - Training loss: {}".format(epoch, epoch_total_loss)
+            wandb_dict = {"train/epoch_loss": epoch_total_loss, "train/epoch": epoch}
+            if use_negative or use_triplet:
                 epoch_cap_loss = (cap_loss / train_dataloader_len).item()
-                epoch_neg_loss = (neg_loss / train_dataloader_len).item()
-                print("Epoch: {} - Training loss: {} - Caption loss: {} - Negative loss: {}".format(epoch,
-                                                                                                    epoch_total_loss,
-                                                                                                    epoch_cap_loss,
-                                                                                                    epoch_neg_loss))
-            else:
-                print("Epoch: {} - Training loss: {} ".format(epoch, epoch_total_loss))
+                msg += "- Caption loss: {} ".format(epoch_cap_loss)
+                wandb_dict["train/epoch_caption_loss"] = epoch_cap_loss
+                if use_negative:
+                    epoch_neg_loss = (neg_loss / train_dataloader_len).item()
+                    msg += "- Negative loss: {}".format(epoch_neg_loss)
+                    wandb_dict["train/epoch_negative_loss"] = epoch_neg_loss
+                if use_triplet:
+                    epoch_triplet_loss = (triplet_loss / train_dataloader_len).item()
+                    msg += "- Triplet loss: {}".format(epoch_triplet_loss)
+                    wandb_dict["train/epoch_triplet_loss"] = epoch_triplet_loss
+            print(msg)
             if use_wandb:
-                wandb.log({"train/epoch_loss": epoch_total_loss, "train/epoch": epoch})
+                wandb.log(wandb_dict)
             del epoch_total_loss
         del train_dataloader_len, epoch_loss
         torch.cuda.empty_cache()
@@ -230,6 +273,7 @@ def main(config: DictConfig):
     learning_rate = config["training_setup"]["learning_rate"]
     early_stopping = config["training_setup"]["early_stopping"]
     multigpu = config["training_setup"]["multigpu"]
+    use_triplet = config["training_setup"]["use_triplet"]
     use_negative = config["training_setup"]["use_negative"]
 
     # Initialize seeds
@@ -268,6 +312,7 @@ def main(config: DictConfig):
         processor = AutoProcessor.from_pretrained(model_name, model_max_length=model_max_length)
         model = Blip2ForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.float16,
                                                               device_map=device,
+                                                              use_triplet=use_triplet,
                                                               use_negative=use_negative)  # device_map='auto' allocates resources for the model automatically
     elif "Florence-2" in model_name:
         processor = AutoProcessor.from_pretrained(model_name, model_max_length=model_max_length, trust_remote_code=True)
@@ -297,18 +342,30 @@ def main(config: DictConfig):
             A.GaussNoise(std_range=(0.0, 0.05), mean_range=(0.0, 0.0), p=0.5),
             A.Affine(rotate=(-10.0, 10.0), shear=(-10.0, 10.0), scale=1, p=0.5)
         ], bbox_params=A.BboxParams(format='pascal_voc', label_fields=[]))
-    train_dataset = ImageCaptioningDataset(train_csv, processor, augmentation, text_input=text_input)
+
+    if use_triplet:
+        train_dataset = ImageCaptioningDatasetTriplet(train_csv, processor, augmentation, text_input=text_input)
+    else:
+        train_dataset = ImageCaptioningDataset(train_csv, processor, augmentation, text_input=text_input)
+
     val_dataset = ImageCaptioningDataset(val_csv, processor, augmentation=None, text_input=text_input)
+
+    if use_triplet:
+        collate_function = collate_fn_triplet
+    else:
+        collate_function = collate_fn
+
     if multigpu:
         train_dataloader = DataLoader(train_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers,
-                                      sampler=DistributedSampler(train_dataset), collate_fn=collate_fn)
+                                      sampler=DistributedSampler(train_dataset), collate_fn=collate_function)
         val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers,
-                                    sampler=DistributedSampler(val_dataset), collate_fn=collate_fn)
+                                    sampler=DistributedSampler(val_dataset), collate_fn=collate_function)
     else:
         train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers,
-                                      collate_fn=collate_fn)
+                                      collate_fn=collate_function)
         val_dataloader = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers,
-                                    collate_fn=collate_fn)
+                                    collate_fn=collate_function)
+    print("Dataset built!")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -320,6 +377,7 @@ def main(config: DictConfig):
                       device=device,
                       use_wandb=use_wandb,
                       use_negative=use_negative,
+                      use_triplet=use_triplet,
                       save_interval=save_interval,
                       run=run,
                       early_stopping=early_stopping,
