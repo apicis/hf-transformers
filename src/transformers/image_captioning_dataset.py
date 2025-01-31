@@ -5,6 +5,7 @@ import albumentations as A
 import cv2
 import random
 import torch
+import os
 
 from torch.utils.data import Dataset, DataLoader
 from PIL import Image
@@ -15,30 +16,36 @@ class ImageCaptioningDataset(Dataset):
     """Custom dataset with image, caption pairs"""
 
     def __init__(self, annotations_file, processor, augmentation, margin=10, text_input=None):
-        self.annotations = pd.read_csv(annotations_file)
+        annotations_temp = pd.read_csv(annotations_file)
         self.processor = processor
         self.augmentation = augmentation
         self.margin = margin
         self.text_input = text_input
-        for ind, image in enumerate(self.annotations['filename']):
-            if "/media/tapicella/Win11_OS/Users/tapicella/Downloads/gibson_dataset" in image:
-                self.annotations.loc[ind, 'filename'] = image.replace(
-                    "/media/tapicella/Win11_OS/Users/tapicella/Downloads/gibson_dataset",
-                    "/media/tapicella/Win11_OS/Users/tapicella/Downloads/gibson_dataset")
-            elif "/work/tgalliena/SImCa/data/sampled_images" in image:
-                self.annotations.loc[ind, 'filename'] = image.replace("/work/tgalliena/SImCa/data/sampled_images",
-                                                                      "/media/tapicella/Win11_OS/Users/tapicella/Downloads/gibson_dataset")
+
+        # Precompute all the paths to check
+        image_paths = annotations_temp['filename'].apply(lambda x: x.replace(
+            "/projects/simca/extracted_dataset/postprocessed_dataset", "/media/tapicella/Data/data"))
+
+        # Efficiently identify rows with invalid paths
+        valid_paths_mask = image_paths.apply(os.path.exists)
+
+        # Filter out rows with invalid paths
+        self.annotations = annotations_temp[valid_paths_mask].copy()
+        self.episodes_id = annotations_temp['episode_id'][valid_paths_mask].copy()
+        self.object_id = annotations_temp['object_id'][valid_paths_mask].copy()
+
 
     def __len__(self):
         return len(self.annotations)
 
     def __getitem__(self, idx):
-        img_path = self.annotations['filename'][idx]
-        caption = self.annotations['caption'][idx]
+        annotation_example = self.annotations.iloc[idx]
+        img_path = annotation_example['filename'].replace("/projects/simca/extracted_dataset/postprocessed_dataset", "/media/tapicella/Data/data")
+        caption = annotation_example['caption']
+        bb = ast.literal_eval(annotation_example['bounding_box'])
 
         # img_array_original = np.load(img_path)[:, :, :3]
         img_array_original = np.load(img_path, allow_pickle=True)['arr_0'].item()['image']
-        bb = ast.literal_eval(self.annotations['bounding_box'][idx])
         bbox_exp_original = [bb[0] - self.margin if (bb[0] - self.margin) >= 0 else 0,
                     bb[1] - self.margin if (bb[1] - self.margin) >= 0 else 0,
                     bb[2] + self.margin if (bb[2] + self.margin) < img_array_original.shape[0] else (img_array_original.shape[0] - 1),
