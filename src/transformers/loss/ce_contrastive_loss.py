@@ -35,37 +35,39 @@ class CrossEntropyAndTripletLoss(nn.Module):
         self.caption_loss = nn.CrossEntropyLoss(reduction="mean")
         self.triplet_loss = TripletLoss(reduction="mean")
 
-    def forward(self, logits, labels, output_dict=False):
+    def forward(self, logits, labels, latent_vector, output_dict=False):
         """
             B: batch
             V: number of vocabulary tokens
             S: sentence (tokens)
+            E: embedding
 
             Args:
                 logits: model prediction [B x S x V ]
                 labels: considered tokens sampled [B x S ]
+                latent_vector: latent vector to compute the triplet loss with [B x E]
         """
-        # Get only anchor negative examples to compute captioning loss
-        mask = torch.ones(logits.shape[0], dtype=torch.bool, device=logits.device)
-        mask[1::3] = False
-        anchor_negatives_logits = logits[mask, :, :]
-        anchor_negatives_labels = labels[mask, :]
+        # Get only anchor examples to compute captioning loss
+        mask = torch.zeros(logits.shape[0], dtype=torch.bool, device=logits.device)
+        mask[::3] = True
+        anchor_logits = logits[mask, :, :]
+        anchor_labels = labels[mask, :]
         caption_loss = self.caption_loss(
-            anchor_negatives_logits.permute(0, 2, 1),
-            anchor_negatives_labels,
+            anchor_logits.permute(0, 2, 1),
+            anchor_labels,
         )
         caption_loss = caption_loss * self.caption_loss_weight
 
         # Separate into anchors, positives and negatives
-        mask = torch.zeros(logits.shape[0], dtype=torch.bool, device=logits.device)
+        mask = torch.zeros(latent_vector.shape[0], dtype=torch.bool, device=latent_vector.device)
         mask[::3] = True
-        anchors = logits[mask, :, :]
-        mask = torch.zeros(logits.shape[0], dtype=torch.bool, device=logits.device)
+        anchors = latent_vector[mask]
+        mask = torch.zeros(latent_vector.shape[0], dtype=torch.bool, device=latent_vector.device)
         mask[1::3] = True
-        positives = logits[mask, :, :]
-        mask = torch.zeros(logits.shape[0], dtype=torch.bool, device=logits.device)
+        positives = latent_vector[mask]
+        mask = torch.zeros(latent_vector.shape[0], dtype=torch.bool, device=latent_vector.device)
         mask[2::3] = True
-        negatives = logits[mask, :, :]
+        negatives = latent_vector[mask]
         triplet_loss = self.triplet_loss(
             anchors=anchors,
             positives=positives,

@@ -34,6 +34,7 @@ class ImageCaptioningDataset(Dataset):
         self.episodes_id = annotations_temp['episode_id'][valid_paths_mask].copy()
         self.object_id = annotations_temp['object_id'][valid_paths_mask].copy()
 
+        print("Dataset built!")
 
     def __len__(self):
         return len(self.annotations)
@@ -41,6 +42,7 @@ class ImageCaptioningDataset(Dataset):
     def __getitem__(self, idx):
         annotation_example = self.annotations.iloc[idx]
         img_path = annotation_example['filename'].replace("/projects/simca/extracted_dataset/postprocessed_dataset", "/media/tapicella/Data/data")
+        print(img_path)
         caption = annotation_example['caption']
         bb = ast.literal_eval(annotation_example['bounding_box'])
 

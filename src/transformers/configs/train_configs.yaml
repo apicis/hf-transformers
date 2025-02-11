@@ -16,7 +16,7 @@ dataset:
 
 training_setup:
   multigpu: False
-  seed: 44
+  seed: 1
   batch_size: 2
   learning_rate: 0.0001
   num_workers: 0
@@ -26,3 +26,5 @@ training_setup:
   patience: 3
   use_triplet: True  # If True, the actual batch size will be batch_size*3
   use_negative: False
+  triplet_loss_weight: 0.5
+  negative_loss_weight: 0.5

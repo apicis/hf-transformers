@@ -110,6 +110,13 @@ class Trainer:
         self.patience = patience
         self.multigpu = multigpu
 
+        if self.device == 0 or self.device == "cuda":
+            if self.use_wandb:
+                self.dest_dir = os.path.join(os.getcwd(), "checkpoints", run.project, run.id)
+            else:
+                self.dest_dir = os.path.join(os.getcwd(), "checkpoints", "blip2")
+            os.makedirs(self.dest_dir, exist_ok=True)
+
     def training_loop(self):
         min_eval_loss = float('inf')
         early_stopping_hook = 0
@@ -146,16 +153,13 @@ class Trainer:
 
             if save_logs:
                 # Save checkpoint
-                if epoch % self.save_interval == 0 and self.device == 0:
-                    if self.use_wandb:
-                        save_path = os.path.join(os.getcwd(), "checkpoints", self.run.project, self.run.id,
-                                                 f"checkpoint_{epoch}.pt")
-                    else:
-                        save_path = os.path.join(os.getcwd(), "checkpoints", "blip2", f"checkpoint_{epoch}.pt")
+                if epoch % self.save_interval == 0 and (self.device == 0 or self.device == "cuda"):
+                    save_path = os.path.join(self.dest_dir, f"checkpoint_{epoch}.pt")
                     if self.multigpu:
                         self.model.module.save_pretrained(save_path, from_pt=True)
                     else:
                         self.model.save_pretrained(save_path, from_pt=True)
+                    print("Saving model at {}".format(save_path))
 
     def train_one_epoch(self, model, train_dataloader, epoch, optimizer, device, use_wandb, use_negative, use_triplet, multigpu):
         epoch_loss = 0
@@ -275,6 +279,8 @@ def main(config: DictConfig):
     multigpu = config["training_setup"]["multigpu"]
     use_triplet = config["training_setup"]["use_triplet"]
     use_negative = config["training_setup"]["use_negative"]
+    triplet_loss_weight = config["training_setup"]["triplet_loss_weight"]
+    negative_loss_weight = config["training_setup"]["negative_loss_weight"]
 
     # Initialize seeds
     random.seed(seed)
@@ -313,7 +319,10 @@ def main(config: DictConfig):
         model = Blip2ForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.float16,
                                                               device_map=device,
                                                               use_triplet=use_triplet,
-                                                              use_negative=use_negative)  # device_map='auto' allocates resources for the model automatically
+                                                              use_negative=use_negative,
+                                                              caption_loss_weight=1.0,
+                                                              triplet_loss_weight=triplet_loss_weight,
+                                                              negative_loss_weight=negative_loss_weight)  # device_map='auto' allocates resources for the model automatically
     elif "Florence-2" in model_name:
         processor = AutoProcessor.from_pretrained(model_name, model_max_length=model_max_length, trust_remote_code=True)
         model = Florence2ForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.float16,
@@ -367,7 +376,7 @@ def main(config: DictConfig):
                                     collate_fn=collate_function)
     print("Dataset built!")
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
     trainer = Trainer(model=model,
                       num_epochs=num_epochs,

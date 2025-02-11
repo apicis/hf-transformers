@@ -2019,21 +2019,21 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
     config_class = Blip2Config
     main_input_name = "pixel_values"
 
-    def __init__(self, config: Blip2Config, use_negative: bool, use_triplet: bool):
+    def __init__(self, config: Blip2Config, use_negative: bool, use_triplet: bool, caption_loss_weight: float, triplet_loss_weight:float, negative_loss_weight:float):
         super().__init__(config)
 
         self.use_negative = use_negative
         self.use_triplet = use_triplet
         if self.use_negative and self.use_triplet:
-            self.loss_fct = PositiveNegativeTripletLoss(caption_loss_weight=1.0,
-                                                        triplet_loss_weight=0.5,
-                                                        negative_loss_weight=0.5)
+            self.loss_fct = PositiveNegativeTripletLoss(caption_loss_weight=caption_loss_weight,
+                                                        triplet_loss_weight=triplet_loss_weight,
+                                                        negative_loss_weight=negative_loss_weight)
         elif self.use_triplet:
-            self.loss_fct = CrossEntropyAndTripletLoss(caption_loss_weight=1.0,
-                                                       triplet_loss_weight=0.5)
+            self.loss_fct = CrossEntropyAndTripletLoss(caption_loss_weight=caption_loss_weight,
+                                                       triplet_loss_weight=triplet_loss_weight)
         elif self.use_negative:
-            self.loss_fct = PositiveNegativeLoss(caption_loss_weight=1.0,
-                                                 negative_loss_weight=0.5)
+            self.loss_fct = PositiveNegativeLoss(caption_loss_weight=caption_loss_weight,
+                                                 negative_loss_weight=negative_loss_weight)
         else:
             self.loss_fct = CrossEntropyLoss(reduction="mean")
 
@@ -2190,6 +2190,8 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
         )
         image_embeds = vision_outputs[0]
 
+        pooler_output = vision_outputs[1]
+
         # step 2: forward the query tokens through the QFormer, using the image embeddings for cross-attention
         image_attention_mask = torch.ones(image_embeds.size()[:-1], dtype=torch.long, device=image_embeds.device)
 
@@ -2250,14 +2252,16 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
 
                 # Flatten the tokens
             if self.use_negative or self.use_triplet:
-                loss_dict = self.loss_fct(logits=shift_logits, labels=shift_labels, output_dict=return_dict)
+                loss_dict = self.loss_fct(logits=shift_logits, labels=shift_labels, latent_vector=pooler_output, output_dict=return_dict)
                 loss_cap = loss_dict["caption_loss"]
+                # print(f"{loss_cap}")
                 loss_neg = 0.0
                 loss_triplet = 0.0
                 if self.use_negative:
                     loss_neg = loss_dict["negative_loss"]
                 if self.use_triplet:
                     loss_triplet = loss_dict["triplet_loss"]
+                    # print(f"{loss_triplet}")
                 loss = loss_cap + loss_neg + loss_triplet
             else:
                 loss = self.loss_fct(shift_logits.view(-1, self.config.text_config.vocab_size), shift_labels.view(-1))
