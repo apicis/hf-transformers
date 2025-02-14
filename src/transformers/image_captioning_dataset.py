@@ -23,8 +23,7 @@ class ImageCaptioningDataset(Dataset):
         self.text_input = text_input
 
         # Precompute all the paths to check
-        image_paths = annotations_temp['filename'].apply(lambda x: x.replace(
-            "/projects/simca/extracted_dataset/postprocessed_dataset", "/media/tapicella/Data/data"))
+        image_paths = annotations_temp['filename']#.apply(lambda x: x.replace("/projects/simca/extracted_dataset/postprocessed_dataset", "/media/tapicella/Data/data"))
 
         # Efficiently identify rows with invalid paths
         valid_paths_mask = image_paths.apply(os.path.exists)
@@ -41,8 +40,8 @@ class ImageCaptioningDataset(Dataset):
 
     def __getitem__(self, idx):
         annotation_example = self.annotations.iloc[idx]
-        img_path = annotation_example['filename'].replace("/projects/simca/extracted_dataset/postprocessed_dataset", "/media/tapicella/Data/data")
-        print(img_path)
+        img_path = annotation_example['filename']#.replace("/projects/simca/extracted_dataset/postprocessed_dataset", "/media/tapicella/Data/data")
+        #print(img_path)
         caption = annotation_example['caption']
         bb = ast.literal_eval(annotation_example['bounding_box'])
 
