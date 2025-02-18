@@ -2250,7 +2250,7 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
                 shift_logits = logits[..., :-1, :].contiguous()
                 shift_labels = labels[..., 1:].contiguous().to(logits.device)
 
-                # Flatten the tokens
+            # Flatten the tokens
             if self.use_negative or self.use_triplet:
                 loss_dict = self.loss_fct(logits=shift_logits, labels=shift_labels, latent_vector=pooler_output, output_dict=return_dict)
                 loss_cap = loss_dict["caption_loss"]

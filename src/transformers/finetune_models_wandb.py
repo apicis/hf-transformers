@@ -354,10 +354,10 @@ def main(config: DictConfig):
 
     if use_triplet:
         train_dataset = ImageCaptioningDatasetTriplet(train_csv, processor, augmentation, text_input=text_input)
+        val_dataset = ImageCaptioningDatasetTriplet(val_csv, processor, augmentation=None, text_input=text_input)
     else:
         train_dataset = ImageCaptioningDataset(train_csv, processor, augmentation, text_input=text_input)
-
-    val_dataset = ImageCaptioningDataset(val_csv, processor, augmentation=None, text_input=text_input)
+        val_dataset = ImageCaptioningDataset(val_csv, processor, augmentation=None, text_input=text_input)
 
     if use_triplet:
         collate_function = collate_fn_triplet
