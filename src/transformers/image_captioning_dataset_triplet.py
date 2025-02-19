@@ -54,6 +54,11 @@ class ImageCaptioningDatasetTriplet(Dataset):
         positive_annotations = annotations[(annotations['bounding_box'] != f"{bounding_box}") &
                                            (annotations['episode_id'] == episode_id) &
                                            (annotations['object_id'] == object_id)]
+        # Check if positive is empty
+        if positive_annotations.shape[0] == 0:
+            positive_annotations = annotations[(annotations['bounding_box'] == f"{bounding_box}") &
+                                           (annotations['episode_id'] == episode_id) &
+                                           (annotations['object_id'] == object_id)]
         positive_example = positive_annotations.sample(1).iloc[0]
         positive_image = positive_example['filename']#.replace("/projects/simca/extracted_dataset/postprocessed_dataset", "/media/tapicella/Data/data")
         positive_caption = positive_example['caption']
@@ -133,8 +138,8 @@ class ImageCaptioningDatasetTriplet(Dataset):
                 positive_bbox_exp = augmented['bboxes'][0]
             augmented = self.augmentation(image=negative_array_original, bboxes=[negative_bb_original])
             if len(augmented['bboxes']) != 0:
-                anchor_array = augmented['image']
-                anchor_bbox_exp = augmented['bboxes'][0]
+                negative_array = augmented['image']
+                negative_bbox_exp = augmented['bboxes'][0]
             del augmented
 
         # Load the anchor, positive, and negative images
@@ -221,37 +226,43 @@ if __name__ == "__main__":
 
         anchor_array_original = anchor_encoding["img_array_original"]
         anchor_bbox_original = anchor_encoding["bbox_exp_original"]
+        anchor_array = anchor_encoding["img_array"]
+        anchor_bbox = anchor_encoding["bbox_exp"]
         anchor_episode_id = anchor_encoding["episode_id"].item()
         anchor_object_id = anchor_encoding["object_id"].item()
 
         positive_array_original = positive_encoding["img_array_original"]
         positive_bbox_original = positive_encoding["bbox_exp_original"]
+        positive_array = positive_encoding["img_array"]
+        positive_bbox = positive_encoding["bbox_exp"]
         positive_episode_id = positive_encoding["episode_id"].item()
         positive_object_id = positive_encoding["object_id"].item()
 
         negative_array_original = negative_encoding["img_array_original"]
         negative_bbox_original = negative_encoding["bbox_exp_original"]
+        negative_array = negative_encoding["img_array"]
+        negative_bbox = negative_encoding["bbox_exp"]
         negative_episode_id = negative_encoding["episode_id"].item()
         negative_object_id = negative_encoding["object_id"].item()
 
-        anchor_array_original = anchor_array_original.detach().numpy()[0]
-        positive_array_original = positive_array_original.detach().numpy()[0]
-        negative_array_original = negative_array_original.detach().numpy()[0]
+        anchor_array = anchor_array.detach().numpy()[0]
+        positive_array = positive_array.detach().numpy()[0]
+        negative_array = negative_array.detach().numpy()[0]
 
         # Visualise
-        img_vis = cv2.rectangle(cv2.cvtColor(anchor_array_original, cv2.COLOR_RGB2BGR),
-                                          (int(anchor_bbox_original[0]), int(anchor_bbox_original[1])),
-                                          (int(anchor_bbox_original[2]), int(anchor_bbox_original[3])), (0, 255, 0), 3)
+        img_vis = cv2.rectangle(cv2.cvtColor(anchor_array, cv2.COLOR_RGB2BGR),
+                                          (int(anchor_bbox[0]), int(anchor_bbox[1])),
+                                          (int(anchor_bbox[2]), int(anchor_bbox[3])), (0, 255, 0), 3)
         cv2.imshow("Anchor", cv2.resize(img_vis, (img_vis.shape[1] // 4, img_vis.shape[0] // 4)))
 
-        img_vis = cv2.rectangle(cv2.cvtColor(positive_array_original, cv2.COLOR_RGB2BGR),
-                                          (int(positive_bbox_original[0]), int(positive_bbox_original[1])),
-                                          (int(positive_bbox_original[2]), int(positive_bbox_original[3])), (0, 255, 0), 3)
+        img_vis = cv2.rectangle(cv2.cvtColor(positive_array, cv2.COLOR_RGB2BGR),
+                                          (int(positive_bbox[0]), int(positive_bbox[1])),
+                                          (int(positive_bbox[2]), int(positive_bbox[3])), (0, 255, 0), 3)
         cv2.imshow("Positive", cv2.resize(img_vis, (img_vis.shape[1] // 4, img_vis.shape[0] // 4)))
 
-        img_vis = cv2.rectangle(cv2.cvtColor(negative_array_original, cv2.COLOR_RGB2BGR),
-                                          (int(negative_bbox_original[0]), int(negative_bbox_original[1])),
-                                          (int(negative_bbox_original[2]), int(negative_bbox_original[3])), (0, 255, 0), 3)
+        img_vis = cv2.rectangle(cv2.cvtColor(negative_array, cv2.COLOR_RGB2BGR),
+                                          (int(negative_bbox[0]), int(negative_bbox[1])),
+                                          (int(negative_bbox[2]), int(negative_bbox[3])), (0, 255, 0), 3)
         cv2.imshow("Negative",
                    cv2.resize(img_vis, (img_vis.shape[1] // 4, img_vis.shape[0] // 4)))
         print(f"{anchor_episode_id=}")
