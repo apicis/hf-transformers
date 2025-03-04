@@ -225,7 +225,6 @@ class Trainer:
                 wandb.log(wandb_dict)
             del epoch_total_loss
         del train_dataloader_len, epoch_loss
-        torch.cuda.empty_cache()
 
     @torch.no_grad()
     def validate_one_epoch(self, model, val_dataloader, epoch, device, use_wandb, multigpu):
@@ -252,7 +251,6 @@ class Trainer:
                 wandb.log({"val/epoch_loss": epoch_total_loss, "val/epoch": epoch})
             del epoch_total_loss
         del val_dataloader_len
-        torch.cuda.empty_cache()
         return eval_loss
 
 
@@ -354,10 +352,9 @@ def main(config: DictConfig):
 
     if use_triplet:
         train_dataset = ImageCaptioningDatasetTriplet(train_csv, processor, augmentation, text_input=text_input)
-        val_dataset = ImageCaptioningDatasetTriplet(val_csv, processor, augmentation=None, text_input=text_input)
     else:
         train_dataset = ImageCaptioningDataset(train_csv, processor, augmentation, text_input=text_input)
-        val_dataset = ImageCaptioningDataset(val_csv, processor, augmentation=None, text_input=text_input)
+    val_dataset = ImageCaptioningDataset(val_csv, processor, augmentation=None, text_input=text_input)
 
     if use_triplet:
         collate_function = collate_fn_triplet
@@ -368,12 +365,12 @@ def main(config: DictConfig):
         train_dataloader = DataLoader(train_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers,
                                       sampler=DistributedSampler(train_dataset), collate_fn=collate_function)
         val_dataloader = DataLoader(val_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers,
-                                    sampler=DistributedSampler(val_dataset), collate_fn=collate_function)
+                                    sampler=DistributedSampler(val_dataset), collate_fn=collate_fn)
     else:
         train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers,
                                       collate_fn=collate_function)
         val_dataloader = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers,
-                                    collate_fn=collate_function)
+                                    collate_fn=collate_fn)
     print("Dataset built!")
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
