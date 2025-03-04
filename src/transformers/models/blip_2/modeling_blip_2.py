@@ -2190,8 +2190,6 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
         )
         image_embeds = vision_outputs[0]
 
-        pooler_output = vision_outputs[1]
-
         # step 2: forward the query tokens through the QFormer, using the image embeddings for cross-attention
         image_attention_mask = torch.ones(image_embeds.size()[:-1], dtype=torch.long, device=image_embeds.device)
 
@@ -2205,6 +2203,8 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
             return_dict=return_dict,
         )
         query_output = query_outputs[0]
+        # assert torch.equal(query_outputs[1], query_outputs["pooler_output"]), "Tensors are not the same!"
+        pooler_output = query_outputs[1]
 
         # step 3: use the language model, conditioned on the query outputs and the prompt
         language_model_inputs = self.language_projection(query_output)
