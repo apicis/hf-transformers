@@ -328,11 +328,12 @@ def main(config: DictConfig):
             device)
     # Define the LoraConfig
     config_lora = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        lora_dropout=0.05,
+        r=8,
+        lora_alpha=16,
+        lora_dropout=0.3,
         bias="none",
-        target_modules=["q_proj", "k_proj"]
+        target_modules=["q_proj", "v_proj"],
+        modules_to_save=["vision_model.encoder.layers.38.mlp.fc2"]
     )
 
     model = get_peft_model(model, config_lora)
