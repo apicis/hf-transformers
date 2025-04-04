@@ -332,8 +332,7 @@ def main(config: DictConfig):
         lora_alpha=16,
         lora_dropout=0.3,
         bias="none",
-        target_modules=["q_proj", "v_proj"],
-        modules_to_save=["vision_model.encoder.layers.38.mlp.fc2"]
+        target_modules=["q_proj", "v_proj", "vision_model.encoder.layers.38.mlp.fc2"]
     )
 
     model = get_peft_model(model, config_lora)
