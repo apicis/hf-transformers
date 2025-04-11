@@ -1,7 +1,7 @@
 wandb:
   use_wandb: False
-  project: "simca"
-  entity: "pavis-hsp"
+  project: "..."
+  entity: "..."
   display_name: ${now:%Y-%m-%d}/${now:%H-%M-%S}
 
 model:
@@ -10,9 +10,9 @@ model:
   model_max_length: 512
 
 dataset:
-  train_csv: "/media/tapicella/Data/data/gibson_randomGoal_coca_mask2former_train.csv"
-  val_csv: "/media/tapicella/Data/data/gibson_randomGoal_coca_mask2former_train.csv"
-  use_augmentation: False
+  train_csv: "..."
+  val_csv: "..."
+  use_augmentation: True
 
 training_setup:
   multigpu: False
@@ -25,6 +25,4 @@ training_setup:
   early_stopping: True
   patience: 3
   use_triplet: True  # If True, the actual batch size will be batch_size*3
-  use_negative: False
   triplet_loss_weight: 0.5
-  negative_loss_weight: 0.5
