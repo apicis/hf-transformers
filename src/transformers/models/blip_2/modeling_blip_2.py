@@ -26,8 +26,6 @@ from torch.nn import CrossEntropyLoss
 from ...activations import ACT2FN
 from ...generation import GenerationMixin
 from ...loss.ce_contrastive_loss import CrossEntropyAndTripletLoss
-from ...loss.positive_negative_loss import PositiveNegativeLoss
-from ...loss.positive_negative_triplet_loss import PositiveNegativeTripletLoss
 from ...modeling_outputs import (
     BaseModelOutput,
     BaseModelOutputWithPastAndCrossAttentions,
@@ -72,7 +70,6 @@ class Blip2ForConditionalGenerationModelOutput(ModelOutput):
 
     loss: Optional[Tuple[torch.FloatTensor]] = None
     loss_cap: Optional[Tuple[torch.FloatTensor]] = None
-    loss_neg: Optional[Tuple[torch.FloatTensor]] = None
     loss_trip: Optional[Tuple[torch.FloatTensor]] = None
     logits: Optional[Tuple[torch.FloatTensor]] = None
     vision_outputs: Optional[torch.FloatTensor] = None
@@ -2019,21 +2016,13 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
     config_class = Blip2Config
     main_input_name = "pixel_values"
 
-    def __init__(self, config: Blip2Config, use_negative: bool, use_triplet: bool, caption_loss_weight: float, triplet_loss_weight:float, negative_loss_weight:float):
+    def __init__(self, config: Blip2Config, use_triplet: bool, caption_loss_weight: float, triplet_loss_weight:float):
         super().__init__(config)
 
-        self.use_negative = use_negative
         self.use_triplet = use_triplet
-        if self.use_negative and self.use_triplet:
-            self.loss_fct = PositiveNegativeTripletLoss(caption_loss_weight=caption_loss_weight,
-                                                        triplet_loss_weight=triplet_loss_weight,
-                                                        negative_loss_weight=negative_loss_weight)
-        elif self.use_triplet:
+        if self.use_triplet:
             self.loss_fct = CrossEntropyAndTripletLoss(caption_loss_weight=caption_loss_weight,
                                                        triplet_loss_weight=triplet_loss_weight)
-        elif self.use_negative:
-            self.loss_fct = PositiveNegativeLoss(caption_loss_weight=caption_loss_weight,
-                                                 negative_loss_weight=negative_loss_weight)
         else:
             self.loss_fct = CrossEntropyLoss(reduction="mean")
 
@@ -2250,18 +2239,14 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
                 shift_labels = labels[..., 1:].contiguous().to(logits.device)
 
             # Flatten the tokens
-            if self.use_negative or self.use_triplet:
+            if self.use_triplet:
                 loss_dict = self.loss_fct(logits=shift_logits, labels=shift_labels, latent_vector=pooler_output, output_dict=return_dict)
                 loss_cap = loss_dict["caption_loss"]
                 # print(f"{loss_cap}")
-                loss_neg = 0.0
                 loss_triplet = 0.0
-                if self.use_negative:
-                    loss_neg = loss_dict["negative_loss"]
-                if self.use_triplet:
-                    loss_triplet = loss_dict["triplet_loss"]
-                    # print(f"{loss_triplet}")
-                loss = loss_cap + loss_neg + loss_triplet
+                loss_triplet = loss_dict["triplet_loss"]
+                # print(f"{loss_triplet}")
+                loss = loss_cap + loss_triplet
             else:
                 loss = self.loss_fct(shift_logits.view(-1, self.config.text_config.vocab_size), shift_labels.view(-1))
         else:
@@ -2283,11 +2268,10 @@ class Blip2ForConditionalGeneration(Blip2PreTrainedModel, GenerationMixin):
             output = (logits, vision_outputs, query_outputs, outputs)
             return ((loss,) + output) if loss is not None else output
 
-        if self.use_negative or self.use_triplet:
+        if self.use_triplet:
             return Blip2ForConditionalGenerationModelOutput(
                 loss=loss,
                 loss_cap=loss_cap,
-                loss_neg=loss_neg,
                 loss_trip=loss_triplet,
                 logits=logits,
                 vision_outputs=vision_outputs,
