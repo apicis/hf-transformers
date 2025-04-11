@@ -88,7 +88,6 @@ class Trainer:
                  optimizer,
                  device,
                  use_wandb,
-                 use_negative,
                  use_triplet,
                  save_interval,
                  run,
@@ -102,7 +101,6 @@ class Trainer:
         self.optimizer = optimizer
         self.device = device
         self.use_wandb = use_wandb
-        self.use_negative = use_negative
         self.use_triplet = use_triplet
         self.save_interval = save_interval
         self.run = run
@@ -127,7 +125,7 @@ class Trainer:
             if self.multigpu:
                 self.train_dataloader.sampler.set_epoch(epoch)
             self.train_one_epoch(self.model, self.train_dataloader, epoch, self.optimizer, self.device, self.use_wandb,
-                                 self.use_negative, self.use_triplet, self.multigpu)
+                                 self.use_triplet, self.multigpu)
             torch.cuda.empty_cache()
 
             # One epoch validation loop
@@ -161,14 +159,11 @@ class Trainer:
                         self.model.save_pretrained(save_path, from_pt=True)
                     print("Saving model at {}".format(save_path))
 
-    def train_one_epoch(self, model, train_dataloader, epoch, optimizer, device, use_wandb, use_negative, use_triplet, multigpu):
+    def train_one_epoch(self, model, train_dataloader, epoch, optimizer, device, use_wandb, use_triplet, multigpu):
         epoch_loss = 0
-        if use_negative or use_triplet:
+        if use_triplet:
             cap_loss = 0
-            if use_negative:
-                neg_loss = 0
-            if use_triplet:
-                triplet_loss = 0
+            triplet_loss = 0
         train_dataloader_len = len(train_dataloader)
         for _, batch in enumerate(tqdm(train_dataloader)):
             input_ids = batch["input_ids"].to(device)
@@ -182,12 +177,9 @@ class Trainer:
 
             optimizer.zero_grad()
             loss = outputs["loss"]
-            if use_negative or use_triplet:
+            if use_triplet:
                 cap_loss += outputs["loss_cap"]
-                if use_negative:
-                    neg_loss += outputs["loss_neg"]
-                if use_triplet:
-                    triplet_loss += outputs["loss_trip"]
+                triplet_loss += outputs["loss_trip"]
             epoch_loss += loss
             loss.backward()
             optimizer.step()
@@ -196,30 +188,23 @@ class Trainer:
         train_dataloader_len = torch.tensor(train_dataloader_len, dtype=torch.int, device=device)
         if multigpu:
             dist.all_reduce(epoch_loss, op=dist.ReduceOp.SUM)
-            if use_negative or use_triplet:
+            if use_triplet:
                 dist.all_reduce(cap_loss, op=dist.ReduceOp.SUM)
-                if use_negative:
-                    dist.all_reduce(neg_loss, op=dist.ReduceOp.SUM)
-                if use_triplet:
-                    dist.all_reduce(triplet_loss, op=dist.ReduceOp.SUM)
+                dist.all_reduce(triplet_loss, op=dist.ReduceOp.SUM)
             dist.all_reduce(train_dataloader_len, op=dist.ReduceOp.SUM)
 
         if device == 0 or device == "cuda":
             epoch_total_loss = (epoch_loss / train_dataloader_len).item()
             msg = "Epoch: {} - Training loss: {}".format(epoch, epoch_total_loss)
             wandb_dict = {"train/epoch_loss": epoch_total_loss, "train/epoch": epoch}
-            if use_negative or use_triplet:
+            if use_triplet:
                 epoch_cap_loss = (cap_loss / train_dataloader_len).item()
                 msg += "- Caption loss: {} ".format(epoch_cap_loss)
                 wandb_dict["train/epoch_caption_loss"] = epoch_cap_loss
-                if use_negative:
-                    epoch_neg_loss = (neg_loss / train_dataloader_len).item()
-                    msg += "- Negative loss: {}".format(epoch_neg_loss)
-                    wandb_dict["train/epoch_negative_loss"] = epoch_neg_loss
-                if use_triplet:
-                    epoch_triplet_loss = (triplet_loss / train_dataloader_len).item()
-                    msg += "- Triplet loss: {}".format(epoch_triplet_loss)
-                    wandb_dict["train/epoch_triplet_loss"] = epoch_triplet_loss
+                
+                epoch_triplet_loss = (triplet_loss / train_dataloader_len).item()
+                msg += "- Triplet loss: {}".format(epoch_triplet_loss)
+                wandb_dict["train/epoch_triplet_loss"] = epoch_triplet_loss
             print(msg)
             if use_wandb:
                 wandb.log(wandb_dict)
@@ -276,9 +261,7 @@ def main(config: DictConfig):
     early_stopping = config["training_setup"]["early_stopping"]
     multigpu = config["training_setup"]["multigpu"]
     use_triplet = config["training_setup"]["use_triplet"]
-    use_negative = config["training_setup"]["use_negative"]
     triplet_loss_weight = config["training_setup"]["triplet_loss_weight"]
-    negative_loss_weight = config["training_setup"]["negative_loss_weight"]
 
     # Initialize seeds
     random.seed(seed)
@@ -317,14 +300,11 @@ def main(config: DictConfig):
         model = Blip2ForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.float16,
                                                               device_map=device,
                                                               use_triplet=use_triplet,
-                                                              use_negative=use_negative,
                                                               caption_loss_weight=1.0,
-                                                              triplet_loss_weight=triplet_loss_weight,
-                                                              negative_loss_weight=negative_loss_weight)  # device_map='auto' allocates resources for the model automatically
+                                                              triplet_loss_weight=triplet_loss_weight)  # device_map='auto' allocates resources for the model automatically
     elif "Florence-2" in model_name:
         processor = AutoProcessor.from_pretrained(model_name, model_max_length=model_max_length, trust_remote_code=True)
-        model = Florence2ForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.float16,
-                                                                  use_negative=use_negative).to(
+        model = Florence2ForConditionalGeneration.from_pretrained(model_name, torch_dtype=torch.float16).to(
             device)
     # Define the LoraConfig
     config_lora = LoraConfig(
@@ -383,7 +363,6 @@ def main(config: DictConfig):
                       optimizer=optimizer,
                       device=device,
                       use_wandb=use_wandb,
-                      use_negative=use_negative,
                       use_triplet=use_triplet,
                       save_interval=save_interval,
                       run=run,
