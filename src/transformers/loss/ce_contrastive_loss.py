@@ -1,5 +1,4 @@
-"""
-
+""" Implementation of the combination between crossentropy and triplet loss. 
 """
 
 import torch
